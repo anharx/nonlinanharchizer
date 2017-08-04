@@ -45,11 +45,13 @@ import matplotlib.pyplot as plt
 from scipy import optimize
 from scipy.io import wavfile
 import argparse
+import subprocess
 
 
 # Parsing of command line arguments
 
 parser = argparse.ArgumentParser(description='Evaluate anharmonic shape of input files and characterize a nonlinearity measure from it.')
+
 
 def reasonableWindowType(x):
  if 1 <= int(x) <= 1E5:
@@ -232,13 +234,22 @@ def getSparsity(r, signal, n=N):
  "From the level energy vector, return the /sparsity/ of the representation defined as the 1-norm of this"
  return np.average(np.fabs(lvlEnergy(signal, n=n, r=r)[1]))
 
+def resample(filename):
 
+ # Creat a new audio file with the sample rate at 16khz.
+ inputname = filename + '.wav'
+ outputname = filename + '_16khz' + '.wav'
+ subprocess.call(['ffmpeg', '-i', inputname, '-ar', '16000', outputname])
+ return outputname
+# perprocessing procedure, change the sample rate to 16khz
+
+resampled_file = resample(args.wavfile.name.rpartition('.')[0])
 # Processing starts here
 
 
-wav = wavfile.read(args.wavfile)[1]
-out_filename = args.wavfile.name.rpartition('.')[0] + '.txt'
-out_figure = args.wavfile.name.rpartition('.')[0] + '.svg'
+wav = wavfile.read(resampled_file)[1]
+out_filename = resampled_file.rpartition('.')[0] + '.txt'
+out_figure = resampled_file.rpartition('.')[0] + '.svg'
 
 print "\nProcessing results outputted to file: " + out_filename + "\n"
 out = open(out_filename, 'wt')
@@ -260,6 +271,7 @@ for t in xrange(0, wav.size-WINDOW-N, INTERVAL):
 
 out.close()
 
+
 lvlEnergies = lvlEnergy(wav)[1]
 plt.matshow(lvlEnergies, origin='upper', aspect='auto')
 plt.colorbar()
@@ -268,4 +280,4 @@ if args.save_matrix:
  plt.savefig(out_figure, dpi=2000)
  print "\nPlot of level energies saved to file: " + out_figure
 else:
-plt.show(block=True) # this shows a dialogue to save the figure too
+ plt.show(block=True) # this shows a dialogue to save the figure too
