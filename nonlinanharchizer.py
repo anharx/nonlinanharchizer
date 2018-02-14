@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # NonlinAnharChizer: Nonlinearity and Anharmonicity Characterizer, is a script that evaluates the anharmonic shape
@@ -22,7 +22,7 @@
 #  while simultaneously small enough to avoid a sparsity being dominated by the nearly null low-frequency coefficients, which would
 #  unfairly favor Fourier. N=32 seems to work well for 16kHz speech; check the matplots of lvlEnergy if you want to try other values.
 
-# The representation basis is a multiresolution frame based on P. Hanusse's psin_1 and p_cos1 functions (for which the definition
+# The representation basis is a multiresolution frame based on P. Hanusse's psin_1 and pcos_1 functions (for which the definition
 #  series have closed expressions). Like with Fourier series', it is possible to use both psin and pcos, or just either. To complete
 #  the basis at finite resolution, we add a unit function. The effect of this on the representation gets canceled if it is tuned to
 #  the same shape of the analysis window. On the absence of any prior information about the fundamental period, a Hanning window
@@ -63,7 +63,7 @@ parser.add_argument('--iter', type=int, choices=range(3, 100), metavar='MAX_ITER
 
 parser.add_argument('-s', '--save-matrix', action='store_true', help='output the plot of the level energies as a PNG file instead of displaying it interactively')
 
-parser.add_argument('wavfile', type=argparse.FileType('r'), help='name of the input wav file')
+parser.add_argument('wavfile', type=argparse.FileType('r'), nargs='?', help='name of the input wav file')
 
 args = parser.parse_args()
 
@@ -90,7 +90,7 @@ N = 32
 TINY = 1E-6
 
 # Half to the half, or reciprocal of the Pythagoras' constant
-recPytha = 1./np.sqrt(2.)
+recPytha = 1. / np.sqrt(2.)
 
 
 # Function definitions
@@ -141,30 +141,31 @@ def basis(n=N, r=TINY):
  frame = psin(n, r)
  basis = unit(n)
  # Now let us iteratively add the multiple resolutions:
- halfN = n/2
+ halfN = n // 2
  width = n
  m = 1
  while m < halfN: # Leave out the last level (1-pixel-long resolution), to avoid semiperiod cancellation with the psin
   mass = np.copy(frame[::m]) * np.sqrt(m)
+ # Normalization (not necessary in practice):
  # offset = np.mean(mass)
  # mass -= offset
  # weight = np.sqrt(np.sum(np.square(mass))/N) # L2
-  #weight = np.max(mass) # Linf
+ # weight = np.max(mass) # Linf
  # mass /= weight
-  for l in xrange(m): # m times from 0 to m-1
-   preZ = l*width
-   postZ = n-width-preZ
+  for l in range(m): # m times from 0 to m-1
+   preZ = l * width
+   postZ = n - width - preZ
    atom = np.r_[np.zeros(preZ), mass, np.zeros(postZ)]
    basis = np.c_[basis, atom]
   width >>= 1
   m <<= 1
  # Correction for the last level
  mass = np.empty(2)
- mass[0] = +np.sqrt(n/2.)
- mass[1] = -np.sqrt(n/2.)
- for l in xrange(n/2):
-  preZ = l*2
-  postZ = n-2-preZ
+ mass[0] = +np.sqrt(n / 2.)
+ mass[1] = -np.sqrt(n / 2.)
+ for l in range(n // 2):
+  preZ = l * 2
+  postZ = n - 2 - preZ
   atom = np.r_[np.zeros(preZ), mass, np.zeros(postZ)]
   basis = np.c_[basis, atom]
  return basis
@@ -183,70 +184,84 @@ def getDual(n=N, r=TINY):
 #plt.plot(np.transpose(getDual()[32:64,:])); plt.show()
 #plt.plot(basis()[:,16:32]); plt.show()
 
-def project(signal, n=N, r=TINY):
- "Window-filter a signal, project it through the covectors and return the projections (coefficients) as a bidimensional array"
- window = unit(n)
- dual = getDual(n, r)
- length = signal.size - n
- projections = np.empty([n, length])
- for t in xrange(length):
-  filtdata = np.multiply(signal[t:t+n], window)
-  projections[:,t] = np.dot(dual, filtdata) # filtdata is 1D (not column) but nevertheless the result (also 1D) is correct
- return projections
-
-# For analysis purposes, we 2-norm normalize the dual:
-
 def getAnalysis(n=N, r=TINY):
+ "For analysis purposes, normalize the dual"
  dual = getDual(n, r)
- for i in xrange(1, n):
+ for i in range(1, n):
   normalCovector = dual[i]
   normalCovector -= np.mean(normalCovector) # should already be close to 0 though
   normalCovector /= normalization(normalCovector)
  return dual
 
-def analyze(signal, n=N, r=TINY):
+def project_old(signal, n=N, r=TINY):
+ "Window-filter a signal, project it through the covectors and return the projections (coefficients) as a bidimensional array"
  window = unit(n)
- anDual = getAnalysis(n, r)
+ dual = getDual(n, r)
  length = signal.size - n
- analysis = np.empty([n, length])
- for t in xrange(length):
-  filtdata = np.multiply(signal[t:t+n].astype(float), window)
-  analysis[:,t] = np.dot(anDual, filtdata) # filtdata is 1D (not column) but nevertheless the result (also 1D) is correct
- return analysis
+ projections = np.empty([n, length])
+ for t in range(length):
+  filtdata = np.multiply(signal[t:t+n], window)
+  projections[:,t] = np.dot(dual, filtdata) # filtdata is 1D (not column) but nevertheless the result (also 1D) is correct
+ return projections
 
-def lvlEnergy(signal, n=N, r=TINY):
+def project(signal, n=N, r=TINY, matsignal=None):
+ "Window-filter a signal, project it through the covectors and return the projections (coefficients) as a bidimensional array"
+ # Window-filter the rows of the dual matrix; this is equivalent but faster than doing it on the signal segments. which are of size n anyways 
+ filtdual = np.multiply(getDual(n, r), unit(n)) # Dual matrix, filtered
+            #           #              # 1D window
+            #           # 2D matrix with covectors as rows 
+            # multiply rows element-wise
+ if matsignal is None:
+  length = signal.size - n
+  matsignal = np.empty([n, length])
+  for t in range(length):
+   matsignal[:,t] = signal[t:t+n]
+ return np.dot(filtdual, matsignal)
+
+def lvlEnergy(signal, n=N, r=TINY, matsignal=None):
  "For each set of coefficients in a same level, return its /energy/, or square root of the sum of squares"
- projections = project(signal, n, r)
+ projections = project(signal, n=n, r=r, matsignal=matsignal)
  averages = projections[0] # take the first component, which should be the same as all the others
  length = signal.size - n
  levels = log2int(n)
  lvlEnergy = np.empty([levels, length])
- for j in xrange(levels):
+ for j in range(levels):
   lvlEnergy[j] = np.linalg.norm(projections[2**j:2*2**j], axis=0)
  return averages, lvlEnergy
 
 #thing = lvlEnergy(wav[1000:2256], n=256)[1]
 #plt.matshow(thing, origin='upper', aspect='auto'); plt.colorbar(); plt.show()
 
-def getSparsity(r, signal, n=N):
+def getSparsity(r, signal, n=N, matsignal=None):
  "From the level energy vector, return the /sparsity/ of the representation defined as the 1-norm of this"
- return np.average(np.fabs(lvlEnergy(signal, n=n, r=r)[1]))
+ return np.average(np.fabs(lvlEnergy(signal, n=n, r=r, matsignal=matsignal)[1]))
 
 
 # Processing starts here
 
+if args.wavfile is None:
+ # The script was invoked without a filename; launch a GUI dialog to ask for one
+ from tkinter import Tk
+ from tkinter.filedialog import askopenfilename
+ Tk().withdraw()
+ in_filename = askopenfilename()
+else:
+ in_filename = args.wavfile.name
 
-wav = wavfile.read(args.wavfile)[1]
-out_filename = args.wavfile.name.rpartition('.')[0] + '.txt'
-out_figure = args.wavfile.name.rpartition('.')[0] + '.svg'
+wav = wavfile.read(in_filename)[1]
+out_filename = in_filename.rpartition('.')[0] + '.txt'
+out_figure = in_filename.rpartition('.')[0] + '.svg'
 
-print "\nProcessing results outputted to file: " + out_filename + "\n"
+print("\nProcessing results outputted to file: " + out_filename + "\n")
 out = open(out_filename, 'wt')
 
-for t in xrange(0, wav.size-WINDOW-N, INTERVAL):
+for t in range(0, wav.size-WINDOW-N, INTERVAL):
  signal = wav[t:t+WINDOW+N].astype(float)
- fourierSparsity = getSparsity(TINY, signal, n=N)
- result = optimize.minimize_scalar(getSparsity, args=(signal, N), method='bounded', bounds=(TINY, 1.-TINY), options={'maxiter': MAXITER})
+ matsignal = np.empty([N, WINDOW])
+ for l in range(WINDOW):
+  matsignal[:,l] = signal[l:l+N]
+ fourierSparsity = getSparsity(TINY, signal, n=N, matsignal=matsignal)
+ result = optimize.minimize_scalar(getSparsity, args=(signal, N, matsignal), method='bounded', bounds=(TINY, 1.-TINY), options={'maxiter': MAXITER})
  if fourierSparsity < result.fun:
   sparsity = fourierSparsity
   r = TINY
@@ -255,8 +270,9 @@ for t in xrange(0, wav.size-WINDOW-N, INTERVAL):
   sparsity = result.fun
   r = result.x
   nonlin = np.log(fourierSparsity / sparsity)
+ sparsity /= np.average(np.fabs(signal))
  out.write('{} {} {}\n'.format(sparsity, r, nonlin))
- print '{:4.1f}%:  {:5.1f}  {:6.4f}  {:6.4f}'.format(100.*t/wav.size, sparsity, r, nonlin)
+ print('{:4.1f}%:  {:5.1f}  {:6.4f}  {:6.4f}'.format(100.*t/wav.size, sparsity, r, nonlin))
 
 out.close()
 
@@ -266,6 +282,6 @@ plt.colorbar()
 
 if args.save_matrix:
  plt.savefig(out_figure, dpi=2000)
- print "\nPlot of level energies saved to file: " + out_figure
-else:
-plt.show(block=True) # this shows a dialogue to save the figure too
+ print("\nPlot of level energies saved to file: " + out_figure)
+#else:
+# plt.show(block=True) # this shows a dialogue to save the figure too
